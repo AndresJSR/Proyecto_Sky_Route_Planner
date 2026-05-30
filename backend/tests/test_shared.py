@@ -14,7 +14,14 @@ Covers:
 
 import pytest
 
-from algorithms.shared import build_aircraft_registry, filter_valid_routes, build_result
+from algorithms.shared import (
+    build_aircraft_registry,
+    build_result,
+    calculate_route_cost,
+    calculate_route_time,
+    filter_valid_routes,
+    select_best_aircraft,
+)
 from domain.models.aircraft import Aircraft, DEFAULT_AIRCRAFT
 from domain.models.airport import Airport
 from domain.models.route import Route
@@ -44,6 +51,17 @@ def make_route(
         origen=origen, destino=destino, distancia_km=km,
         aeronaves=aeronaves or ["Avión Comercial"],
         costo_base=costo_base, estancia_minima=60,
+    )
+
+
+@pytest.fixture
+def calculation_route() -> Route:
+    return make_route(
+        origen="A",
+        destino="B",
+        km=100.0,
+        aeronaves=["Avión Comercial", "Hélice"],
+        costo_base=1.0,
     )
 
 
@@ -214,6 +232,52 @@ class TestFilterValidRoutes:
         g.add_node(make_airport("SOLO", es_hub=True))
         result = filter_valid_routes(g, "SOLO", self._all_registry(), True)
         assert result == []
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# calculate_route_cost / calculate_route_time / select_best_aircraft
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestRouteHelpers:
+
+    def test_calculate_route_cost_normal(self, calculation_route):
+        registry = build_aircraft_registry(["Avión Comercial"])
+        aircraft = registry["Avión Comercial"]
+
+        assert calculate_route_cost(calculation_route, aircraft) == pytest.approx(18.0)
+
+    def test_calculate_route_cost_subsidized_is_zero(self, calculation_route):
+        subsidized_route = make_route(
+            origen="A",
+            destino="B",
+            km=100.0,
+            aeronaves=["Avión Comercial"],
+            costo_base=0.0,
+        )
+        aircraft = build_aircraft_registry(["Avión Comercial"])["Avión Comercial"]
+
+        assert calculate_route_cost(subsidized_route, aircraft) == 0.0
+
+    def test_calculate_route_time(self, calculation_route):
+        aircraft = build_aircraft_registry(["Avión Comercial"])["Avión Comercial"]
+
+        assert calculate_route_time(calculation_route, aircraft) == pytest.approx(70.0)
+
+    def test_select_best_aircraft_cost_prefers_cheapest(self, calculation_route):
+        registry = build_aircraft_registry(["Avión Comercial", "Hélice"])
+
+        aircraft = select_best_aircraft(calculation_route, registry, "cost")
+
+        assert aircraft is not None
+        assert aircraft.nombre == "Hélice"
+
+    def test_select_best_aircraft_time_prefers_fastest(self, calculation_route):
+        registry = build_aircraft_registry(["Avión Comercial", "Hélice"])
+
+        aircraft = select_best_aircraft(calculation_route, registry, "time")
+
+        assert aircraft is not None
+        assert aircraft.nombre == "Avión Comercial"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

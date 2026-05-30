@@ -1,189 +1,248 @@
 """
-Backtracking algorithms — DFS with constraint pruning.
+Backtracking algorithms for constrained itinerary planning.
 
-Justification for DFS / Backtracking
--------------------------------------
-Finding the itinerary that maximises the number of visited destinations
-under a budget or time constraint is NP-hard in the general case (it
-reduces to the constrained Hamiltonian-path problem). For the project
-network size (≤ 29 airports), exhaustive DFS with constraint-based
-pruning is the correct and project-specified approach:
+Responsibility
+--------------
+This module implements DFS with backtracking and constraint pruning to find
+the itinerary that visits the maximum number of destinations without exceeding
+a hard budget or time limit.
 
-  * A route is added to the current path only when its accumulated
-    cost/time does not exceed the remaining budget/time  →  pruning.
-  * When no valid extension exists the algorithm backtracks one step
-    and tries the next alternative.
-  * The globally optimal solution (maximum destinations) is guaranteed
-    because the full feasible state-space is explored.
+This is different from Dijkstra:
+    - Dijkstra minimizes a path between one origin and one destination.
+    - Backtracking explores feasible paths to maximize the number of visited
+      airports under a constraint.
 
-Complexity: O(V!) worst case, but early pruning makes it practical for
-small networks.  The project specification explicitly calls for this
-approach.
+Justification
+-------------
+The requirement "visit the greatest number of destinations without exceeding
+budget/time and without repeating airports" is a constrained path search
+problem. Dijkstra is not enough because the objective is not only to minimize
+one accumulated weight between two fixed nodes, but to maximize coverage.
 
-Return format (both functions)
--------------------------------
-On success (including the trivial case where no route fits the constraint):
+DFS with backtracking is appropriate for the project because:
+    - It explores feasible paths.
+    - It prunes branches that exceed the constraint.
+    - It prevents repeated airports using a visited set.
+    - It guarantees the best feasible result for small/medium project graphs.
 
-    {
-        "ruta":               ["BOG", "MDE", "CTG"],
-        "tramos": [
-            {
-                "origen":       "BOG",
-                "destino":      "MDE",
-                "distancia_km": 240.0,
-                "aeronave":     "Avión Regional",
-                "costo_usd":    60.0,
-                "tiempo_min":   264.0,
-            },
-            ...
-        ],
-        "total_distancia_km": 790.0,
-        "total_costo_usd":    ...,
-        "total_tiempo_min":   ...,
-    }
-
-When no departure is possible (all first legs exceed the constraint),
-the origin-only result is returned with empty tramos and zero totals.
-
+Worst-case complexity is exponential, but constraint pruning keeps it practical
+for the expected project size.
 """
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Literal
 
+from algorithms.shared import (
+    build_aircraft_registry,
+    build_leg,
+    build_result,
+    filter_valid_routes,
+    get_route_weight,
+    select_best_aircraft,
+)
 from domain.models.aircraft import Aircraft
-from domain.models.route import Route
 from graph.adjacency_graph import AdjacencyGraph
-from algorithms.shared import build_aircraft_registry, filter_valid_routes, build_result
-
-# Weight function: (Route, registry) → (peso, aeronave, costo_usd, tiempo_min)
-_BacktrackWeightFn = Callable[[Route, dict[str, Aircraft]], tuple[float, str, float, float]]
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Weight functions
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _best_cost_for_leg(
-    route: Route,
-    registry: dict[str, Aircraft],
-) -> tuple[float, str, float, float]:
-    """Return (min_cost, aircraft_name, min_cost, flight_time) for a route."""
-    if route.es_subsidiada:
-        for name in route.aeronaves:
-            if name in registry:
-                tiempo = registry[name].calcular_tiempo(route.distancia_km)
-                return 0.0, name, 0.0, tiempo
-    best_cost = float("inf")
-    best_name = ""
-    for name in route.aeronaves:
-        if name in registry:
-            c = registry[name].calcular_costo(route.distancia_km)
-            if c < best_cost:
-                best_cost = c
-                best_name = name
-    tiempo = registry[best_name].calcular_tiempo(route.distancia_km) if best_name else 0.0
-    return best_cost, best_name, best_cost, tiempo
+ConstraintMode = Literal["cost", "time"]
 
 
-def _best_time_for_leg(
-    route: Route,
-    registry: dict[str, Aircraft],
-) -> tuple[float, str, float, float]:
-    """Return (min_time, aircraft_name, cost, min_time) for a route."""
-    best_time = float("inf")
-    best_name = ""
-    for name in route.aeronaves:
-        if name in registry:
-            t = registry[name].calcular_tiempo(route.distancia_km)
-            if t < best_time:
-                best_time = t
-                best_name = name
-    costo = 0.0 if route.es_subsidiada else (
-        registry[best_name].calcular_costo(route.distancia_km) if best_name else 0.0
-    )
-    return best_time, best_name, costo, best_time
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Generic DFS core
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _dfs_max_destinos(
-    graph: AdjacencyGraph,
-    origen: str,
-    registry: dict[str, Aircraft],
-    incluir_secundarios: bool,
-    weight_fn: _BacktrackWeightFn,
-    constraint_fn: Callable[[float, float], bool],
-    best: list[dict],
-) -> None:
+def _is_better_result(
+    candidate_path: list[str],
+    candidate_total: float,
+    best_path: list[str],
+    best_total: float,
+) -> bool:
     """
-    Generic DFS that maximises visited destinations under a constraint.
+    Decide if a candidate path is better than the current best path.
 
-    weight_fn returns (peso, aeronave, costo_usd, tiempo_min) for a leg.
-    constraint_fn(accumulated, peso) returns True when the leg is feasible.
+    Priority:
+        1. Visit more destinations.
+        2. If tied, use less accumulated cost/time.
 
     Args:
-        graph:               Flight network graph.
-        origen:              IATA code of the departure airport.
-        registry:            Allowed aircraft registry.
-        incluir_secundarios: When False, only hub airports are visited.
-        weight_fn:           Computes all leg metrics given a route and registry.
-        constraint_fn:       Returns True when the leg fits within the remaining
-                             constraint budget.
-        best:                Single-element list holding the current best result
-                             (mutable reference so nested calls can update it).
+        candidate_path: Current DFS path.
+        candidate_total: Current accumulated constraint value.
+        best_path: Best path found so far.
+        best_total: Best accumulated constraint value found so far.
+
+    Returns:
+        True if candidate should replace the current best.
     """
+    candidate_destinations = max(len(candidate_path) - 1, 0)
+    best_destinations = max(len(best_path) - 1, 0)
+
+    if candidate_destinations > best_destinations:
+        return True
+
+    if candidate_destinations == best_destinations and candidate_total < best_total:
+        return True
+
+    return False
+
+
+def _resolve_registry(
+    aircraft_registry: dict[str, Aircraft] | None = None,
+    tipos_transporte: list[str] | None = None,
+) -> dict[str, Aircraft]:
+    """
+    Resolve the aircraft registry used by backtracking.
+
+    Args:
+        aircraft_registry: Optional registry created from JSON configuration.
+        tipos_transporte: Optional list of aircraft types allowed by the user.
+
+    Returns:
+        Filtered aircraft registry.
+    """
+    if aircraft_registry is None:
+        return build_aircraft_registry(tipos_transporte)
+
+    if tipos_transporte is None:
+        return aircraft_registry
+
+    return {
+        name: aircraft
+        for name, aircraft in aircraft_registry.items()
+        if name in tipos_transporte
+    }
+
+
+def _max_destinations_with_constraint(
+    graph: AdjacencyGraph,
+    origen: str,
+    limit: float,
+    mode: ConstraintMode,
+    aircraft_registry: dict[str, Aircraft] | None = None,
+    tipos_transporte: list[str] | None = None,
+    include_secondary: bool = True,
+) -> dict[str, Any]:
+    """
+    Generic DFS with backtracking for budget or time constrained planning.
+
+    Args:
+        graph: Flight network graph.
+        origen: Origin airport IATA code.
+        limit: Maximum allowed accumulated cost or time.
+        mode: Constraint mode, either 'cost' or 'time'.
+        aircraft_registry: Optional aircraft registry with operative rates.
+        tipos_transporte: Optional list of allowed aircraft type names.
+        include_secondary: When False, secondary airports are excluded.
+
+    Returns:
+        Standard result dictionary.
+    """
+    if mode not in {"cost", "time"}:
+        raise ValueError("Backtracking mode must be either 'cost' or 'time'.")
+
+    if limit < 0:
+        raise ValueError("The constraint limit cannot be negative.")
+
+    if not graph.has_node(origen):
+        raise KeyError(f"Origin airport '{origen}' not found in the graph.")
+
+    registry = _resolve_registry(
+        aircraft_registry=aircraft_registry,
+        tipos_transporte=tipos_transporte,
+    )
+
+    if not registry:
+        return build_result(path=[origen], tramos=[])
+
+    best: dict[str, Any] = {
+        "path": [origen],
+        "legs": [],
+        "total": 0.0,
+    }
 
     def dfs(
-        current: str,
+        current_airport: str,
         visited: set[str],
-        path: list[str],
-        tramos: list[dict],
-        acumulado: float,
+        current_path: list[str],
+        current_legs: list[dict[str, Any]],
+        accumulated: float,
     ) -> None:
-        # Update best whenever the current path visits more airports.
-        if len(path) > len(best[0]["ruta"]):
-            best[0] = build_result(path, tramos)
+        nonlocal best
 
-        for route in filter_valid_routes(graph, current, registry, incluir_secundarios):
-            dest = route.destino
-            if dest in visited:
-                continue
-
-            peso, aeronave, costo_usd, tiempo_min = weight_fn(route, registry)
-
-            # Pruning: skip branches that violate the constraint.
-            if not constraint_fn(acumulado, peso):
-                continue
-
-            tramo = {
-                "origen":       current,
-                "destino":      dest,
-                "distancia_km": route.distancia_km,
-                "aeronave":     aeronave,
-                "costo_usd":    costo_usd,
-                "tiempo_min":   tiempo_min,
+        if _is_better_result(
+            candidate_path=current_path,
+            candidate_total=accumulated,
+            best_path=best["path"],
+            best_total=best["total"],
+        ):
+            best = {
+                "path": list(current_path),
+                "legs": list(current_legs),
+                "total": accumulated,
             }
 
-            visited.add(dest)
-            path.append(dest)
-            tramos.append(tramo)
+        valid_routes = filter_valid_routes(
+            graph=graph,
+            airport_id=current_airport,
+            registry=registry,
+            include_secondary=include_secondary,
+        )
 
-            dfs(dest, visited, path, tramos, acumulado + peso)
+        for route in valid_routes:
+            next_airport = route.destino
 
-            # Backtrack — restore state for the next candidate.
-            visited.discard(dest)
-            path.pop()
-            tramos.pop()
+            if next_airport in visited:
+                continue
 
-    dfs(origen, {origen}, [origen], [], 0.0)
+            aircraft = select_best_aircraft(
+                route=route,
+                registry=registry,
+                criterion=mode,
+            )
 
+            if aircraft is None:
+                continue
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Public functions
-# ──────────────────────────────────────────────────────────────────────────────
+            weight = get_route_weight(
+                route=route,
+                aircraft=aircraft,
+                criterion=mode,
+            )
+
+            new_accumulated = accumulated + weight
+
+            # Constraint pruning.
+            if new_accumulated > limit:
+                continue
+
+            leg = build_leg(route=route, aircraft=aircraft)
+
+            visited.add(next_airport)
+            current_path.append(next_airport)
+            current_legs.append(leg)
+
+            dfs(
+                current_airport=next_airport,
+                visited=visited,
+                current_path=current_path,
+                current_legs=current_legs,
+                accumulated=new_accumulated,
+            )
+
+            # Backtrack.
+            visited.remove(next_airport)
+            current_path.pop()
+            current_legs.pop()
+
+    dfs(
+        current_airport=origen,
+        visited={origen},
+        current_path=[origen],
+        current_legs=[],
+        accumulated=0.0,
+    )
+
+    return build_result(
+        path=best["path"],
+        tramos=best["legs"],
+    )
+
 
 def max_destinos_presupuesto(
     graph: AdjacencyGraph,
@@ -191,38 +250,35 @@ def max_destinos_presupuesto(
     presupuesto: float,
     incluir_secundarios: bool = True,
     tipos_transporte: list[str] | None = None,
-) -> dict:
+    aircraft_registry: dict[str, Aircraft] | None = None,
+) -> dict[str, Any]:
     """
-    Find the itinerary that visits the most destinations without exceeding budget.
-    Uses DFS with backtracking.
+    Find the itinerary that visits the most destinations under a budget limit.
 
-    For each leg the aircraft that minimises cost is chosen (CostLegEvaluator).
-    A branch is explored only when the accumulated cost does not exceed the
-    budget (constraint pruning).
+    Optimization logic:
+        1. Maximize number of visited destinations.
+        2. If there is a tie, choose the itinerary with the lowest total cost.
 
     Args:
-        graph:               Flight network graph.
-        origen:              IATA code of the departure airport.
-        presupuesto:         Total available budget in USD.
-        incluir_secundarios: When False, only hub airports are visited.
-        tipos_transporte:    Allowed aircraft type names; None means all types.
+        graph: Flight network graph.
+        origen: Origin airport IATA code.
+        presupuesto: Maximum available budget in USD.
+        incluir_secundarios: When False, secondary airports are excluded.
+        tipos_transporte: Optional list of allowed aircraft types.
+        aircraft_registry: Optional aircraft registry with JSON override rates.
 
     Returns:
-        Result dict with ruta, tramos and accumulated totals.
+        Standard result dictionary.
     """
-    registry = build_aircraft_registry(tipos_transporte)
-    best: list[dict] = [build_result([origen], [])]
-
-    _dfs_max_destinos(
+    return _max_destinations_with_constraint(
         graph=graph,
         origen=origen,
-        registry=registry,
-        incluir_secundarios=incluir_secundarios,
-        weight_fn=_best_cost_for_leg,
-        constraint_fn=lambda acum, peso: acum + peso <= presupuesto,
-        best=best,
+        limit=presupuesto,
+        mode="cost",
+        aircraft_registry=aircraft_registry,
+        tipos_transporte=tipos_transporte,
+        include_secondary=incluir_secundarios,
     )
-    return best[0]
 
 
 def max_destinos_tiempo(
@@ -231,36 +287,32 @@ def max_destinos_tiempo(
     tiempo_disponible_min: float,
     incluir_secundarios: bool = True,
     tipos_transporte: list[str] | None = None,
-) -> dict:
+    aircraft_registry: dict[str, Aircraft] | None = None,
+) -> dict[str, Any]:
     """
-    Find the itinerary that visits the most destinations without exceeding
-    the available time budget.
-    Uses DFS with backtracking.
+    Find the itinerary that visits the most destinations under a time limit.
 
-    For each leg the fastest aircraft is chosen (TimeLegEvaluator).
-    A branch is explored only when the accumulated flight time does not
-    exceed the time limit (constraint pruning).
+    Optimization logic:
+        1. Maximize number of visited destinations.
+        2. If there is a tie, choose the itinerary with the lowest total time.
 
     Args:
-        graph:                  Flight network graph.
-        origen:                 IATA code of the departure airport.
-        tiempo_disponible_min:  Total available time in minutes.
-        incluir_secundarios:    When False, only hub airports are visited.
-        tipos_transporte:       Allowed aircraft type names; None means all types.
+        graph: Flight network graph.
+        origen: Origin airport IATA code.
+        tiempo_disponible_min: Maximum available flight time in minutes.
+        incluir_secundarios: When False, secondary airports are excluded.
+        tipos_transporte: Optional list of allowed aircraft types.
+        aircraft_registry: Optional aircraft registry with JSON override rates.
 
     Returns:
-        Result dict with ruta, tramos and accumulated totals.
+        Standard result dictionary.
     """
-    registry = build_aircraft_registry(tipos_transporte)
-    best: list[dict] = [build_result([origen], [])]
-
-    _dfs_max_destinos(
+    return _max_destinations_with_constraint(
         graph=graph,
         origen=origen,
-        registry=registry,
-        incluir_secundarios=incluir_secundarios,
-        weight_fn=_best_time_for_leg,
-        constraint_fn=lambda acum, peso: acum + peso <= tiempo_disponible_min,
-        best=best,
+        limit=tiempo_disponible_min,
+        mode="time",
+        aircraft_registry=aircraft_registry,
+        tipos_transporte=tipos_transporte,
+        include_secondary=incluir_secundarios,
     )
-    return best[0]

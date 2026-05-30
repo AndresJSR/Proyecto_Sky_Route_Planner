@@ -37,7 +37,14 @@ from infrastructure.json_loader import JSONLoader
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-REQUIRED_KEYS = {"ruta", "tramos", "total_distancia_km", "total_costo_usd", "total_tiempo_min"}
+REQUIRED_KEYS = {
+    "ruta",
+    "tramos",
+    "cantidad_destinos",
+    "total_distancia_km",
+    "total_costo_usd",
+    "total_tiempo_min",
+}
 TRAMO_KEYS    = {"origen", "destino", "distancia_km", "aeronave", "costo_usd", "tiempo_min"}
 
 
@@ -62,6 +69,23 @@ def make_route(
         aeronaves=aeronaves or ["Avión Comercial"],
         costo_base=costo_base, estancia_minima=60,
     )
+
+
+@pytest.fixture
+def tie_graph() -> AdjacencyGraph:
+    """
+    Graph with two equally long itineraries (two destinations each):
+        A → B → D  (more expensive / slower)
+        A → C → D  (cheaper / faster)
+    """
+    g = AdjacencyGraph()
+    for iata in ("A", "B", "C", "D"):
+        g.add_node(make_airport(iata, es_hub=True))
+    g.add_edge(make_route("A", "B", 100.0))
+    g.add_edge(make_route("B", "D", 100.0))
+    g.add_edge(make_route("A", "C", 50.0))
+    g.add_edge(make_route("C", "D", 100.0))
+    return g
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -353,6 +377,12 @@ class TestMaxDestinosPresupuesto:
         assert "D" not in result["ruta"]
         assert "B" in result["ruta"]
 
+    def test_tie_prefers_lower_cost(self, tie_graph):
+        result = max_destinos_presupuesto(tie_graph, "A", 1000.0)
+
+        assert result["ruta"] == ["A", "C", "D"]
+        assert result["total_costo_usd"] < 40.0
+
     # --- More budget → more or equal destinations ---
 
     def test_more_budget_more_or_equal_destinations(self, chain_graph):
@@ -503,6 +533,12 @@ class TestMaxDestinosTiempo:
         """
         result = max_destinos_tiempo(multi_aircraft_graph, "P", 3000.0)
         assert result["total_tiempo_min"] < 2500.0
+
+    def test_tie_prefers_lower_time(self, tie_graph):
+        result = max_destinos_tiempo(tie_graph, "A", 1000.0)
+
+        assert result["ruta"] == ["A", "C", "D"]
+        assert result["total_tiempo_min"] < 200.0
 
     # --- Tramo structure & integrity ---
 

@@ -151,6 +151,16 @@ class TestDijkstraCosto:
         result = dijkstra_costo(linear_graph, "A", "C")
         assert result is None
 
+    def test_respects_allowed_transport_types(self):
+        g = AdjacencyGraph()
+        for iata in ("X", "Y"):
+            g.add_node(make_airport(iata))
+        g.add_edge(make_route("X", "Y", 100.0, aeronaves=["Hélice"]))
+
+        result = dijkstra_costo(g, "X", "Y", tipos_transporte=["Avión Comercial"])
+
+        assert result is None
+
     def test_unknown_origin_raises(self, linear_graph):
         with pytest.raises(KeyError):
             dijkstra_costo(linear_graph, "ZZZ", "C")
