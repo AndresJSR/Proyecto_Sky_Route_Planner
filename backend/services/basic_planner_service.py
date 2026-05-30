@@ -11,8 +11,10 @@ This service exposes the basic itinerary planning use cases required by R2:
    - cost
 
 2. Propose two itinerary alternatives:
-   - Maximum number of destinations within the available budget.
-   - Maximum number of destinations within the available time.
+   - Maximum number of destinations within both budget and available time,
+     prioritizing lower cost as tie-breaker.
+   - Maximum number of destinations within both budget and available time,
+     prioritizing lower time as tie-breaker.
 
 This service does not implement graph algorithms directly. It delegates that
 work to the algorithms package.
@@ -22,10 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from algorithms.backtracking import (
-    max_destinos_presupuesto,
-    max_destinos_tiempo,
-)
+from algorithms.backtracking import max_destinos_presupuesto_y_tiempo
 from algorithms.dijkstra import dijkstra
 from algorithms.shared import build_aircraft_registry, normalize_criterion
 from graph.adjacency_graph import AdjacencyGraph
@@ -65,6 +64,9 @@ class BasicPlannerService:
         Returns:
             Standard route result dictionary, or None if no path exists.
         """
+        origen = origen.upper()
+        destino = destino.upper()
+
         self._validate_airports(origen=origen, destino=destino)
         self._validate_transport_types(tipos_transporte)
 
@@ -92,13 +94,17 @@ class BasicPlannerService:
         """
         Propose two basic itinerary alternatives.
 
+        Both alternatives respect budget and time as hard constraints.
+
         Alternative A:
             Route that visits the maximum number of destinations without
-            exceeding the initial budget.
+            exceeding budget or time. If there is a tie, it chooses the
+            itinerary with the lowest cost.
 
         Alternative B:
             Route that visits the maximum number of destinations without
-            exceeding the available travel time.
+            exceeding budget or time. If there is a tie, it chooses the
+            itinerary with the lowest time.
 
         Args:
             origen: Origin airport IATA code.
@@ -110,6 +116,8 @@ class BasicPlannerService:
         Returns:
             Dictionary containing both proposed itinerary alternatives.
         """
+        origen = origen.upper()
+
         self._validate_origin(origen)
         self._validate_positive_number(presupuesto, "presupuesto")
         self._validate_positive_number(
@@ -121,19 +129,23 @@ class BasicPlannerService:
         tiempo_disponible_min = tiempo_disponible_horas * 60
         aircraft_registry = self._build_registry(tipos_transporte)
 
-        alternativa_presupuesto = max_destinos_presupuesto(
+        alternativa_presupuesto = max_destinos_presupuesto_y_tiempo(
             graph=self.graph,
             origen=origen,
             presupuesto=presupuesto,
+            tiempo_disponible_min=tiempo_disponible_min,
+            criterio_desempate="cost",
             incluir_secundarios=incluir_secundarios,
             tipos_transporte=tipos_transporte,
             aircraft_registry=aircraft_registry,
         )
 
-        alternativa_tiempo = max_destinos_tiempo(
+        alternativa_tiempo = max_destinos_presupuesto_y_tiempo(
             graph=self.graph,
             origen=origen,
+            presupuesto=presupuesto,
             tiempo_disponible_min=tiempo_disponible_min,
+            criterio_desempate="time",
             incluir_secundarios=incluir_secundarios,
             tipos_transporte=tipos_transporte,
             aircraft_registry=aircraft_registry,
@@ -178,6 +190,9 @@ class BasicPlannerService:
         Returns:
             Dictionary mapping each normalized criterion to its route result.
         """
+        origen = origen.upper()
+        destino = destino.upper()
+
         if not criterios:
             raise ValueError("At least one optimization criterion must be provided.")
 
