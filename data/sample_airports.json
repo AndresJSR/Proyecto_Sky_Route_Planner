@@ -1,0 +1,51 @@
+{
+  "airports": [
+    {
+      "code": "BOG",
+      "name": "El Dorado International Airport",
+      "city": "Bogota",
+      "country": "Colombia",
+      "latitude": 4.7016,
+      "longitude": -74.1469
+    },
+    {
+      "code": "MDE",
+      "name": "Jose Maria Cordova International Airport",
+      "city": "Medellin",
+      "country": "Colombia",
+      "latitude": 6.1645,
+      "longitude": -75.4231
+    },
+    {
+      "code": "CTG",
+      "name": "Rafael Nunez International Airport",
+      "city": "Cartagena",
+      "country": "Colombia",
+      "latitude": 10.4424,
+      "longitude": -75.5138
+    }
+  ],
+  "routes": [
+    {
+      "origin_code": "BOG",
+      "destination_code": "MDE",
+      "distance_km": 215.0,
+      "duration_minutes": 50.0,
+      "cost_usd": 48.0
+    },
+    {
+      "origin_code": "MDE",
+      "destination_code": "CTG",
+      "distance_km": 640.0,
+      "duration_minutes": 95.0,
+      "cost_usd": 92.0
+    },
+    {
+      "origin_code": "BOG",
+      "destination_code": "CTG",
+      "distance_km": 657.0,
+      "duration_minutes": 85.0,
+      "cost_usd": 88.0
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""Domain layer for SkyRoute Planner."""
