@@ -40,6 +40,7 @@ On success:
     }
 
 When no path exists: returns None.
+
 """
 
 from __future__ import annotations
@@ -47,11 +48,12 @@ from __future__ import annotations
 import heapq
 from typing import Callable
 
-from domain.models.aircraft import Aircraft, DEFAULT_AIRCRAFT
+from domain.models.aircraft import Aircraft
 from domain.models.route import Route
 from graph.adjacency_graph import AdjacencyGraph
+from algorithms.shared import build_aircraft_registry, build_result
 
-# Weight function type: (Route, aircraft_registry) → (weight, chosen_aircraft_name)
+# Weight function: (Route, registry) → (metric_value, chosen_aircraft_name)
 _WeightFn = Callable[[Route, dict[str, Aircraft]], tuple[float, str]]
 
 
@@ -60,13 +62,7 @@ _WeightFn = Callable[[Route, dict[str, Aircraft]], tuple[float, str]]
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _weight_costo(route: Route, registry: dict[str, Aircraft]) -> tuple[float, str]:
-    """
-    Return (min_cost_usd, best_aircraft_name) for a route.
-
-    Subsidised routes (costo_base == 0) always cost $0 regardless of
-    aircraft. For all other routes, the aircraft with the lowest
-    costo_km is chosen to minimise the leg cost.
-    """
+    """Return (min_cost_usd, best_aircraft_name) for a route."""
     if route.es_subsidiada:
         return 0.0, route.aeronaves[0]
     best_cost = float("inf")
@@ -81,12 +77,7 @@ def _weight_costo(route: Route, registry: dict[str, Aircraft]) -> tuple[float, s
 
 
 def _weight_tiempo(route: Route, registry: dict[str, Aircraft]) -> tuple[float, str]:
-    """
-    Return (min_time_min, fastest_aircraft_name) for a route.
-
-    The aircraft with the lowest tiempo_km is selected to minimise
-    the leg flight time.
-    """
+    """Return (min_time_min, fastest_aircraft_name) for a route."""
     best_time = float("inf")
     best_name = route.aeronaves[0]
     for nombre in route.aeronaves:
@@ -99,12 +90,7 @@ def _weight_tiempo(route: Route, registry: dict[str, Aircraft]) -> tuple[float, 
 
 
 def _weight_distancia(route: Route, _registry: dict[str, Aircraft]) -> tuple[float, str]:
-    """
-    Return (distancia_km, first_aircraft_name) for a route.
-
-    Aircraft type does not affect distance. The first available aircraft
-    is recorded only for reporting purposes.
-    """
+    """Return (distancia_km, first_aircraft_name) for a route."""
     return route.distancia_km, route.aeronaves[0]
 
 
@@ -133,7 +119,7 @@ def _dijkstra(
        - If u == destino, stop early.
     4. For each outgoing edge u→v (blocked routes are already excluded
        by get_neighbors()):
-       - Compute candidate = dist[u] + weight(edge).
+       - Compute candidate = dist[u] + weight_fn(edge).
        - If candidate < dist[v], relax: update dist[v] and prev[v],
          then push (candidate, v) onto the heap.
     5. If destino was never settled, return None (no path).
@@ -226,22 +212,12 @@ def _dijkstra(
     path_nodes.reverse()
     tramos.reverse()
 
-    return {
-        "ruta":               path_nodes,
-        "tramos":             tramos,
-        "total_distancia_km": round(sum(t["distancia_km"] for t in tramos), 2),
-        "total_costo_usd":    round(sum(t["costo_usd"]    for t in tramos), 2),
-        "total_tiempo_min":   round(sum(t["tiempo_min"]   for t in tramos), 2),
-    }
+    return build_result(path_nodes, tramos)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Public API — three Dijkstra variants
 # ──────────────────────────────────────────────────────────────────────────────
-
-def _default_registry() -> dict[str, Aircraft]:
-    return {name: Aircraft.from_defaults(name) for name in DEFAULT_AIRCRAFT}
-
 
 def dijkstra_costo(
     graph: AdjacencyGraph,
@@ -267,7 +243,7 @@ def dijkstra_costo(
         Result dict with 'ruta', 'tramos', 'total_distancia_km',
         'total_costo_usd', 'total_tiempo_min'; or None if unreachable.
     """
-    registry = aircraft_registry or _default_registry()
+    registry = aircraft_registry or build_aircraft_registry()
     return _dijkstra(graph, origen, destino, _weight_costo, registry)
 
 
@@ -292,7 +268,7 @@ def dijkstra_tiempo(
     Returns:
         Result dict with 'ruta', 'tramos', totals; or None if unreachable.
     """
-    registry = aircraft_registry or _default_registry()
+    registry = aircraft_registry or build_aircraft_registry()
     return _dijkstra(graph, origen, destino, _weight_tiempo, registry)
 
 
@@ -318,5 +294,5 @@ def dijkstra_distancia(
     Returns:
         Result dict with 'ruta', 'tramos', totals; or None if unreachable.
     """
-    registry = aircraft_registry or _default_registry()
+    registry = aircraft_registry or build_aircraft_registry()
     return _dijkstra(graph, origen, destino, _weight_distancia, registry)
