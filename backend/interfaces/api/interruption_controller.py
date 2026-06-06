@@ -144,6 +144,34 @@ class InterruptionController:
         except Exception as exc:
             return self._error(exc)
 
+    def manejar_interrupcion_en_transito(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Handle a mid-flight interruption (R4 in-transit state).
+
+        If the traveler is in transit, refunds the flight and returns them
+        to the origin airport.
+
+        Expected payload:
+            {
+                "estado": {...}
+            }
+        """
+        try:
+            estado = self._require_dict(payload, "estado")
+
+            result = (
+                self.interruption_service
+                .manejar_interrupcion_en_transito(estado)
+            )
+
+            return self._success(data=result)
+
+        except Exception as exc:
+            return self._error(exc)
+
     # ------------------------------------------------------------------
     # Response helpers
     # ------------------------------------------------------------------
