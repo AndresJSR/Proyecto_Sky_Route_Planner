@@ -138,17 +138,35 @@ def _is_better_result(
     best_cost: float,
     best_time: float,
     tie_breaker: ConstraintMode,
+    candidate_used_types: frozenset[str] = frozenset(),
+    best_used_types: frozenset[str] = frozenset(),
+    required_types: frozenset[str] = frozenset(),
 ) -> bool:
     """
     Decide if a candidate path is better than the current best path.
 
     Priority:
-        1. Visit more destinations.
-        2. If tied, use the selected tie breaker:
+        1. Transport coverage: an itinerary that uses every required aircraft
+           type at least once beats one that does not, regardless of destination
+           count.  This satisfies the R2 requirement that both proposed
+           itineraries must use each available transport type at least once.
+        2. Visit more destinations.
+        3. If tied, use the selected tie breaker:
             - cost: lower total cost.
             - time: lower total time.
-        3. If still tied, use the secondary metric.
+        4. If still tied, use the secondary metric.
     """
+    # --- 1. Transport coverage priority ---
+    if required_types:
+        candidate_covers = required_types.issubset(candidate_used_types)
+        best_covers = required_types.issubset(best_used_types)
+        if candidate_covers and not best_covers:
+            return True
+        if not candidate_covers and best_covers:
+            return False
+        # Both cover or both don't → fall through to destination count.
+
+    # --- 2. Destination count ---
     candidate_destinations = max(len(candidate_path) - 1, 0)
     best_destinations = max(len(best_path) - 1, 0)
 
@@ -158,6 +176,7 @@ def _is_better_result(
     if candidate_destinations < best_destinations:
         return False
 
+    # --- 3 & 4. Tie-breaker ---
     if tie_breaker == "cost":
         if candidate_cost < best_cost:
             return True
@@ -184,6 +203,7 @@ def _max_destinations_with_limits(
     aircraft_registry: dict[str, Aircraft] | None = None,
     tipos_transporte: list[str] | None = None,
     include_secondary: bool = True,
+    require_all_transport_types: bool = False,
 ) -> dict[str, Any]:
     """
     Generic DFS with backtracking for budget and/or time constrained planning.
@@ -197,6 +217,10 @@ def _max_destinations_with_limits(
         aircraft_registry: Optional aircraft registry with operative rates.
         tipos_transporte: Optional list of allowed aircraft type names.
         include_secondary: When False, secondary airports are excluded.
+        require_all_transport_types: When True, an itinerary that uses every
+            aircraft type present in the registry at least once is preferred
+            over one that does not, even if the latter visits more destinations.
+            This satisfies the R2 requirement for the two proposed itineraries.
 
     Returns:
         Standard result dictionary.
@@ -217,11 +241,18 @@ def _max_destinations_with_limits(
     if not registry:
         return build_result(path=[origen], tramos=[])
 
+    # Set of aircraft types that every proposed itinerary must include at
+    # least once (R2 constraint).  Empty frozenset means no coverage check.
+    required_types: frozenset[str] = (
+        frozenset(registry.keys()) if require_all_transport_types else frozenset()
+    )
+
     best: dict[str, Any] = {
         "path": [origen],
         "legs": [],
         "total_cost": 0.0,
         "total_time": 0.0,
+        "used_types": frozenset(),
     }
 
     def dfs(
@@ -231,6 +262,7 @@ def _max_destinations_with_limits(
         current_legs: list[dict[str, Any]],
         accumulated_cost: float,
         accumulated_time: float,
+        used_types: frozenset[str],
     ) -> None:
         nonlocal best
 
@@ -242,12 +274,16 @@ def _max_destinations_with_limits(
             best_cost=best["total_cost"],
             best_time=best["total_time"],
             tie_breaker=tie_breaker,
+            candidate_used_types=used_types,
+            best_used_types=best["used_types"],
+            required_types=required_types,
         ):
             best = {
                 "path": list(current_path),
                 "legs": list(current_legs),
                 "total_cost": accumulated_cost,
                 "total_time": accumulated_time,
+                "used_types": used_types,
             }
 
         valid_routes = filter_valid_routes(
@@ -282,6 +318,9 @@ def _max_destinations_with_limits(
                 if time_limit is not None and new_time > time_limit:
                     continue
 
+                # frozenset is immutable — no backtracking required.
+                new_used_types = used_types | {aircraft.nombre}
+
                 visited.add(next_airport)
                 current_path.append(next_airport)
                 current_legs.append(leg)
@@ -293,6 +332,7 @@ def _max_destinations_with_limits(
                     current_legs=current_legs,
                     accumulated_cost=new_cost,
                     accumulated_time=new_time,
+                    used_types=new_used_types,
                 )
 
                 # Backtrack.
@@ -307,6 +347,7 @@ def _max_destinations_with_limits(
         current_legs=[],
         accumulated_cost=0.0,
         accumulated_time=0.0,
+        used_types=frozenset(),
     )
 
     return build_result(
@@ -384,6 +425,7 @@ def max_destinos_presupuesto_y_tiempo(
     incluir_secundarios: bool = True,
     tipos_transporte: list[str] | None = None,
     aircraft_registry: dict[str, Aircraft] | None = None,
+    require_all_transport_types: bool = False,
 ) -> dict[str, Any]:
     """
     Find the itinerary that visits the most destinations while respecting
@@ -403,6 +445,8 @@ def max_destinos_presupuesto_y_tiempo(
         incluir_secundarios: When False, secondary airports are excluded.
         tipos_transporte: Optional list of allowed aircraft types.
         aircraft_registry: Optional aircraft registry with JSON override rates.
+        require_all_transport_types: When True, the result must use every
+            aircraft type in the registry at least once (R2 constraint).
 
     Returns:
         Standard result dictionary.
@@ -416,4 +460,5 @@ def max_destinos_presupuesto_y_tiempo(
         aircraft_registry=aircraft_registry,
         tipos_transporte=tipos_transporte,
         include_secondary=incluir_secundarios,
+        require_all_transport_types=require_all_transport_types,
     )

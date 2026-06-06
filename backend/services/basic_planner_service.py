@@ -138,6 +138,7 @@ class BasicPlannerService:
             incluir_secundarios=incluir_secundarios,
             tipos_transporte=tipos_transporte,
             aircraft_registry=aircraft_registry,
+            require_all_transport_types=True,
         )
 
         alternativa_tiempo = max_destinos_presupuesto_y_tiempo(
@@ -149,6 +150,7 @@ class BasicPlannerService:
             incluir_secundarios=incluir_secundarios,
             tipos_transporte=tipos_transporte,
             aircraft_registry=aircraft_registry,
+            require_all_transport_types=True,
         )
 
         return {

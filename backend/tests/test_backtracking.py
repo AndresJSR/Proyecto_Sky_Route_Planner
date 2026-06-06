@@ -25,7 +25,11 @@ Covers:
 import os
 import pytest
 
-from algorithms.backtracking import max_destinos_presupuesto, max_destinos_tiempo
+from algorithms.backtracking import (
+    max_destinos_presupuesto,
+    max_destinos_tiempo,
+    max_destinos_presupuesto_y_tiempo,
+)
 from domain.models.aircraft import Aircraft, DEFAULT_AIRCRAFT
 from domain.models.airport import Airport
 from domain.models.route import Route
