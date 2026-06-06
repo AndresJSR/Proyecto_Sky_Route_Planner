@@ -136,9 +136,10 @@ class JSONLoader:
           * intervaloAlimentacion (default 8 hours).
         """
         config: dict[str, Any] = {
-            "presupuestoMinimoPorc": raw.get("presupuestoMinimoPorc", 35),
-            "intervaloAlojamiento":  raw.get("intervaloAlojamiento", 20),
-            "intervaloAlimentacion": raw.get("intervaloAlimentacion", 8),
+            "presupuestoMinimoPorc":    raw.get("presupuestoMinimoPorc", 35),
+            "maxSubsidiadaPorcentaje":  raw.get("maxSubsidiadaPorcentaje", 20),
+            "intervaloAlojamiento":     raw.get("intervaloAlojamiento", 20),
+            "intervaloAlimentacion":    raw.get("intervaloAlimentacion", 8),
             "aeronaves": {},
         }
         raw_aircraft: dict = raw.get("aeronaves", {})
