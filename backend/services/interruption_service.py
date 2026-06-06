@@ -117,3 +117,62 @@ class InterruptionService:
             return False
 
         return route.bloqueada
+
+    # R4: IN-TRANSIT INTERRUPTION
+
+    def manejar_interrupcion_en_transito(
+        self,
+        estado: dict,
+    ) -> dict:
+        """
+        Handle a mid-flight interruption.
+
+        If the traveler is currently in transit (en_transito=True), refund
+        the flight cost and time, undo distance tracking, and return the
+        traveler to the origin airport.  The minimum-stay time already
+        consumed as free time is intentionally kept (the stay occurred).
+
+        Returns a dict describing the outcome.
+        """
+        if not estado.get("en_transito"):
+            return {
+                "redirigido": False,
+                "mensaje": "Traveler is not currently in transit.",
+            }
+
+        vuelo = estado["vuelo_en_curso"]
+        origen = vuelo["origen"]
+
+        # Refund flight cost
+        estado["presupuesto_actual"] += vuelo["costo"]
+        estado["gasto_total"] -= vuelo["costo"]
+
+        # Refund flight time and meal/lodge counters
+        estado["tiempo_restante_min"] += vuelo["tiempo_min"]
+        estado["minutos_desde_comida"] = max(
+            0, estado["minutos_desde_comida"] - vuelo["tiempo_min"]
+        )
+        estado["minutos_desde_alojamiento"] = max(
+            0, estado["minutos_desde_alojamiento"] - vuelo["tiempo_min"]
+        )
+
+        # Undo distance accumulation
+        estado["distancia_total"] -= vuelo["distancia_km"]
+        if vuelo["subsidiada"]:
+            estado["distancia_subsidiada"] -= vuelo["distancia_km"]
+
+        # Return traveler to origin
+        estado["aeropuerto_actual"] = origen
+
+        # Clear transit state
+        estado["en_transito"] = False
+        estado["vuelo_en_curso"] = None
+
+        return {
+            "redirigido": True,
+            "aeropuerto_retorno": origen,
+            "mensaje": (
+                f"Flight interrupted. Traveler returned to {origen}."
+            ),
+            "estado": estado,
+        }

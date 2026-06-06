@@ -69,7 +69,7 @@ def create_app() -> FastAPI:
     planner_service = BasicPlannerService(graph, config)
     advanced_planner_service = AdvancedPlannerService(graph, config)
     interruption_service = InterruptionService(graph, planner_service)
-    report_service = ReportService()
+    report_service = ReportService(graph)
 
     graph_controller = GraphController(graph_service)
     planner_controller = PlannerController(planner_service)
@@ -202,6 +202,20 @@ def create_app() -> FastAPI:
     def tomar_trabajo(payload: dict[str, Any]) -> dict[str, Any]:
         return advanced_planner_controller.tomar_trabajo(payload)
 
+    @app.post("/planner/advanced/start-flight")
+    def iniciar_vuelo(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.iniciar_vuelo(payload)
+
+    @app.post("/planner/advanced/complete-flight")
+    def completar_vuelo(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.completar_vuelo(payload)
+
+    @app.get("/planner/advanced/route-options")
+    def obtener_opciones_ruta(origen: str, destino: str) -> dict[str, Any]:
+        return advanced_planner_controller.obtener_opciones_ruta(
+            {"origen": origen, "destino": destino}
+        )
+
     # ------------------------------------------------------------------
     # Interruption endpoints
     # ------------------------------------------------------------------
@@ -217,6 +231,10 @@ def create_app() -> FastAPI:
     @app.post("/interruption/recalculate")
     def recalcular_itinerario(payload: dict[str, Any]) -> dict[str, Any]:
         return interruption_controller.recalcular_itinerario(payload)
+
+    @app.post("/interruption/handle-transit")
+    def manejar_interrupcion_en_transito(payload: dict[str, Any]) -> dict[str, Any]:
+        return interruption_controller.manejar_interrupcion_en_transito(payload)
 
     # ------------------------------------------------------------------
     # Report endpoints

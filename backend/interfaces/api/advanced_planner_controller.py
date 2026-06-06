@@ -154,6 +154,76 @@ class AdvancedPlannerController:
         except Exception as exc:
             return self._error(exc)
 
+    def iniciar_vuelo(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Begin a flight leg without completing it (R4 in-transit support).
+
+        Expected payload:
+            {
+                "estado": {...},
+                "destino": "SCL",
+                "aeronave": "Avión Comercial"
+            }
+        """
+        try:
+            estado = self._require_dict(payload, "estado")
+            destino = self._require_str(payload, "destino")
+            aeronave = self._require_str(payload, "aeronave")
+
+            result = self.planner_service.iniciar_vuelo(
+                estado=estado,
+                destino=destino,
+                aeronave=aeronave,
+            )
+
+            return self._success(data=result)
+
+        except Exception as exc:
+            return self._error(exc)
+
+    def completar_vuelo(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Finalise an in-progress flight leg (R4 in-transit support).
+
+        Expected payload:
+            {
+                "estado": {...}
+            }
+        """
+        try:
+            estado = self._require_dict(payload, "estado")
+
+            result = self.planner_service.completar_vuelo(estado=estado)
+
+            return self._success(data=result)
+
+        except Exception as exc:
+            return self._error(exc)
+
+    def obtener_opciones_ruta(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Return all aircraft options available on a direct route (R2).
+
+        Expected payload (query params forwarded as dict):
+            {
+                "origen":  "BOG",
+                "destino": "MDE"
+            }
+        """
+        try:
+            origen  = self._require_str(payload, "origen")
+            destino = self._require_str(payload, "destino")
+
+            result = self.planner_service.obtener_opciones_ruta(
+                origen=origen,
+                destino=destino,
+            )
+
+            return self._success(data=result)
+
+        except Exception as exc:
+            return self._error(exc)
+
     # ------------------------------------------------------------------
     # Response helpers
     # ------------------------------------------------------------------
