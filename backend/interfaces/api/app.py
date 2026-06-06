@@ -24,10 +24,18 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from infrastructure.json_loader import JSONLoader
+from interfaces.api.advanced_planner_controller import (
+    AdvancedPlannerController,
+)
 from interfaces.api.graph_controller import GraphController
+from interfaces.api.interruption_controller import InterruptionController
 from interfaces.api.planner_controller import PlannerController
+from interfaces.api.report_controller import ReportController
+from services.advanced_planner_service import AdvancedPlannerService
 from services.basic_planner_service import BasicPlannerService
 from services.graph_service import GraphService
+from services.interruption_service import InterruptionService
+from services.report_service import ReportService
 
 
 NETWORK_PATH = BACKEND_DIR / "data" / "network.json"
@@ -59,9 +67,19 @@ def create_app() -> FastAPI:
 
     graph_service = GraphService(graph)
     planner_service = BasicPlannerService(graph, config)
+    advanced_planner_service = AdvancedPlannerService(graph, config)
+    interruption_service = InterruptionService(graph, planner_service)
+    report_service = ReportService()
 
     graph_controller = GraphController(graph_service)
     planner_controller = PlannerController(planner_service)
+    advanced_planner_controller = AdvancedPlannerController(
+        advanced_planner_service
+    )
+    interruption_controller = InterruptionController(
+        interruption_service
+    )
+    report_controller = ReportController(report_service)
 
     # ------------------------------------------------------------------
     # Health endpoints
@@ -163,6 +181,50 @@ def create_app() -> FastAPI:
     @app.post("/planner/itineraries")
     def propose_itineraries(payload: dict[str, Any]) -> dict[str, Any]:
         return planner_controller.propose_itineraries(payload)
+
+    # ------------------------------------------------------------------
+    # Advanced planner endpoints
+    # ------------------------------------------------------------------
+
+    @app.post("/planner/advanced/start")
+    def iniciar_viaje(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.iniciar_viaje(payload)
+
+    @app.post("/planner/advanced/step")
+    def avanzar_paso(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.avanzar_paso(payload)
+
+    @app.post("/planner/advanced/activity")
+    def realizar_actividad(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.realizar_actividad(payload)
+
+    @app.post("/planner/advanced/job")
+    def tomar_trabajo(payload: dict[str, Any]) -> dict[str, Any]:
+        return advanced_planner_controller.tomar_trabajo(payload)
+
+    # ------------------------------------------------------------------
+    # Interruption endpoints
+    # ------------------------------------------------------------------
+
+    @app.post("/interruption/block")
+    def bloquear_ruta(payload: dict[str, Any]) -> dict[str, Any]:
+        return interruption_controller.bloquear_ruta(payload)
+
+    @app.post("/interruption/unblock")
+    def desbloquear_ruta(payload: dict[str, Any]) -> dict[str, Any]:
+        return interruption_controller.desbloquear_ruta(payload)
+
+    @app.post("/interruption/recalculate")
+    def recalcular_itinerario(payload: dict[str, Any]) -> dict[str, Any]:
+        return interruption_controller.recalcular_itinerario(payload)
+
+    # ------------------------------------------------------------------
+    # Report endpoints
+    # ------------------------------------------------------------------
+
+    @app.post("/report/generate")
+    def generar_reporte(payload: dict[str, Any]) -> dict[str, Any]:
+        return report_controller.generar_reporte(payload)
 
     return app
 
