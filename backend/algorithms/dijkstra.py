@@ -37,6 +37,7 @@ Where:
 from __future__ import annotations
 
 import heapq
+from itertools import count
 from typing import Any
 
 from algorithms.shared import (
@@ -54,6 +55,8 @@ from graph.adjacency_graph import AdjacencyGraph
 
 
 PreviousStep = tuple[str, Route, Aircraft]
+RequiredTransportState = tuple[str, frozenset[str]]
+RequiredTransportPreviousStep = tuple[RequiredTransportState, Route, Aircraft]
 
 
 def _resolve_registry(
@@ -238,6 +241,224 @@ def _reconstruct_path(
         legs.append(build_leg(route=route, aircraft=aircraft))
 
         current = parent
+
+    path.append(origen)
+    path.reverse()
+    legs.reverse()
+
+    return path, legs
+
+
+def dijkstra_con_transportes_requeridos(
+    graph: AdjacencyGraph,
+    origen: str,
+    destino: str,
+    criterion: str,
+    aircraft_registry: dict[str, Aircraft] | None = None,
+    tipos_transporte: list[str] | None = None,
+    include_secondary: bool = True,
+    transportes_requeridos: list[str] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Find the shortest path requiring all selected transport types at least once.
+
+    This is a Dijkstra variant with extended state:
+
+        state = (current_airport, used_transport_types)
+
+    A solution is valid only when:
+        - current_airport == destino
+        - used_transport_types contains every required transport type.
+
+    This function does not replace the regular Dijkstra implementation. It is
+    only used when the API explicitly asks to enforce the use of all selected
+    transport types.
+
+    Args:
+        graph: Flight network graph.
+        origen: Origin airport IATA code.
+        destino: Destination airport IATA code.
+        criterion: Optimization criterion: cost, time or distance.
+        aircraft_registry: Optional aircraft registry with operative rates.
+        tipos_transporte: Optional list of allowed aircraft type names.
+        include_secondary: When False, secondary airports are excluded.
+        transportes_requeridos: Transport types that must appear at least once
+                                in the final route.
+
+    Returns:
+        Standard result dictionary if a valid path exists, otherwise None.
+    """
+    normalized_criterion = normalize_criterion(criterion)
+
+    if not graph.has_node(origen):
+        raise KeyError(f"Origin airport '{origen}' not found in the graph.")
+
+    if not graph.has_node(destino):
+        raise KeyError(f"Destination airport '{destino}' not found in the graph.")
+
+    registry = _resolve_registry(
+        aircraft_registry=aircraft_registry,
+        tipos_transporte=tipos_transporte,
+    )
+
+    if not registry:
+        return None
+
+    required_transports = frozenset(
+        transport
+        for transport in (transportes_requeridos or tipos_transporte or [])
+        if transport in registry
+    )
+
+    # If there are not at least two required transport types, the extra
+    # constraint is not meaningful. Preserve the previous behavior.
+    if len(required_transports) < 2:
+        return dijkstra(
+            graph=graph,
+            origen=origen,
+            destino=destino,
+            criterion=normalized_criterion,
+            aircraft_registry=registry,
+            tipos_transporte=tipos_transporte,
+            include_secondary=include_secondary,
+        )
+
+    start_state: RequiredTransportState = (origen, frozenset())
+
+    distances: dict[RequiredTransportState, float] = {
+        start_state: 0.0,
+    }
+
+    previous: dict[
+        RequiredTransportState,
+        RequiredTransportPreviousStep,
+    ] = {}
+
+    tie_breaker = count()
+
+    heap: list[tuple[float, int, str, frozenset[str]]] = [
+        (0.0, next(tie_breaker), origen, frozenset())
+    ]
+
+    final_state: RequiredTransportState | None = None
+
+    while heap:
+        current_distance, _, current_airport, used_transports = heapq.heappop(heap)
+        current_state: RequiredTransportState = (current_airport, used_transports)
+
+        if current_distance > distances.get(current_state, float("inf")):
+            continue
+
+        if (
+            current_airport == destino
+            and required_transports.issubset(used_transports)
+        ):
+            final_state = current_state
+            break
+
+        valid_routes = filter_valid_routes(
+            graph=graph,
+            airport_id=current_airport,
+            registry=registry,
+            include_secondary=include_secondary,
+        )
+
+        for route in valid_routes:
+            next_airport = route.destino
+
+            # Important:
+            # The regular Dijkstra chooses only the best aircraft for a route.
+            # Here we must evaluate every valid aircraft because a non-best
+            # aircraft may be necessary to satisfy the transport requirement.
+            for aircraft_name in route.aeronaves:
+                aircraft = registry.get(aircraft_name)
+
+                if aircraft is None:
+                    continue
+
+                next_used_transports = frozenset(
+                    set(used_transports) | {aircraft.nombre}
+                )
+
+                next_state: RequiredTransportState = (
+                    next_airport,
+                    next_used_transports,
+                )
+
+                route_weight = get_route_weight(
+                    route=route,
+                    aircraft=aircraft,
+                    criterion=normalized_criterion,
+                )
+
+                candidate_distance = current_distance + route_weight
+
+                if candidate_distance < distances.get(next_state, float("inf")):
+                    distances[next_state] = candidate_distance
+                    previous[next_state] = (current_state, route, aircraft)
+
+                    heapq.heappush(
+                        heap,
+                        (
+                            candidate_distance,
+                            next(tie_breaker),
+                            next_airport,
+                            next_used_transports,
+                        ),
+                    )
+
+    if final_state is None:
+        return None
+
+    path, legs = _reconstruct_required_transport_path(
+        origen=origen,
+        final_state=final_state,
+        start_state=start_state,
+        previous=previous,
+    )
+
+    return build_result(path=path, tramos=legs)
+
+
+def _reconstruct_required_transport_path(
+    origen: str,
+    final_state: RequiredTransportState,
+    start_state: RequiredTransportState,
+    previous: dict[RequiredTransportState, RequiredTransportPreviousStep],
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """
+    Reconstruct a path generated by dijkstra_con_transportes_requeridos.
+
+    Args:
+        origen: Origin airport IATA code.
+        final_state: Accepted final state.
+        start_state: Initial state.
+        previous: Previous-step dictionary generated by the extended Dijkstra.
+
+    Returns:
+        Tuple containing:
+            - Ordered airport path.
+            - Ordered flight legs.
+    """
+    path: list[str] = []
+    legs: list[dict[str, Any]] = []
+
+    current_state = final_state
+
+    while current_state != start_state:
+        step = previous.get(current_state)
+
+        if step is None:
+            raise RuntimeError(
+                f"Cannot reconstruct constrained path from '{origen}'."
+            )
+
+        previous_state, route, aircraft = step
+
+        path.append(current_state[0])
+        legs.append(build_leg(route=route, aircraft=aircraft))
+
+        current_state = previous_state
 
     path.append(origen)
     path.reverse()

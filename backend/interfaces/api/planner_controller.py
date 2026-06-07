@@ -47,8 +47,12 @@ class PlannerController:
                 "destino": "SCL",
                 "criterio": "costo",
                 "incluir_secundarios": true,
-                "tipos_transporte": ["Avión Comercial", "Hélice"]
+                "tipos_transporte": ["Avión Comercial", "Hélice"],
+                "exigir_todos_los_transportes": true
             }
+
+        The field "exigir_todos_los_transportes" is optional. When it is not
+        provided or is false, the behavior remains the same as before.
         """
         try:
             origen = self._require_str(payload, "origen")
@@ -57,6 +61,11 @@ class PlannerController:
 
             incluir_secundarios = payload.get("incluir_secundarios", True)
             tipos_transporte = payload.get("tipos_transporte")
+            exigir_todos_los_transportes = self._optional_bool(
+                payload=payload,
+                field="exigir_todos_los_transportes",
+                default=False,
+            )
 
             result = self.planner_service.calcular_ruta_optima(
                 origen=origen,
@@ -64,7 +73,15 @@ class PlannerController:
                 criterio=criterio,
                 incluir_secundarios=bool(incluir_secundarios),
                 tipos_transporte=tipos_transporte,
+                exigir_todos_los_transportes=exigir_todos_los_transportes,
             )
+
+            if self._should_return_transport_constraint_not_found(
+                result=result,
+                exigir_todos_los_transportes=exigir_todos_los_transportes,
+                tipos_transporte=tipos_transporte,
+            ):
+                return self._transport_constraint_not_found()
 
             return self._success(data=result)
 
@@ -171,6 +188,46 @@ class PlannerController:
             },
         }
 
+    def _transport_constraint_not_found(self) -> dict[str, Any]:
+        """
+        Build a controlled response when no route satisfies the transport
+        constraint requested by the user.
+
+        This is not an internal server error. The request was valid, but there
+        is no feasible route that uses all selected transport types.
+        """
+        return {
+            "ok": True,
+            "data": None,
+            "error": {
+                "type": "NoRouteFound",
+                "message": (
+                    "No se encontró una ruta que cumpla la restricción "
+                    "de usar todos los transportes seleccionados."
+                ),
+            },
+        }
+
+    def _should_return_transport_constraint_not_found(
+        self,
+        result: dict[str, Any] | None,
+        exigir_todos_los_transportes: bool,
+        tipos_transporte: Any,
+    ) -> bool:
+        """
+        Decide if the controller should return the controlled no-route response
+        for the transport constraint.
+
+        The special response only applies when the user explicitly asked to use
+        all selected transport types and provided at least two types.
+        """
+        return (
+            result is None
+            and exigir_todos_los_transportes is True
+            and isinstance(tipos_transporte, list)
+            and len(tipos_transporte) >= 2
+        )
+
     # ------------------------------------------------------------------
     # Payload validators
     # ------------------------------------------------------------------
@@ -222,3 +279,19 @@ class PlannerController:
             raise ValueError(f"All values in '{field}' must be non-empty strings.")
 
         return [item.strip() for item in value]
+
+    def _optional_bool(
+        self,
+        payload: dict[str, Any],
+        field: str,
+        default: bool = False,
+    ) -> bool:
+        """
+        Extract and validate an optional boolean field.
+        """
+        value = payload.get(field, default)
+
+        if not isinstance(value, bool):
+            raise ValueError(f"Field '{field}' must be boolean.")
+
+        return value

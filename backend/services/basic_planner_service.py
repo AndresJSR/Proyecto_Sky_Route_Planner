@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from algorithms.backtracking import max_destinos_presupuesto_y_tiempo
-from algorithms.dijkstra import dijkstra
+from algorithms.dijkstra import dijkstra, dijkstra_con_transportes_requeridos
 from algorithms.shared import build_aircraft_registry, normalize_criterion
 from graph.adjacency_graph import AdjacencyGraph
 
@@ -50,6 +50,7 @@ class BasicPlannerService:
         criterio: str,
         incluir_secundarios: bool = True,
         tipos_transporte: list[str] | None = None,
+        exigir_todos_los_transportes: bool = False,
     ) -> dict[str, Any] | None:
         """
         Calculate the best route between two airports by the given criterion.
@@ -60,6 +61,9 @@ class BasicPlannerService:
             criterio: Optimization criterion: costo, tiempo or distancia.
             incluir_secundarios: When False, secondary airports are excluded.
             tipos_transporte: Allowed aircraft type names. None means all types.
+            exigir_todos_los_transportes: When True, the route must use every
+                selected aircraft type at least once. This only applies when
+                tipos_transporte contains two or more transport types.
 
         Returns:
             Standard route result dictionary, or None if no path exists.
@@ -67,11 +71,36 @@ class BasicPlannerService:
         origen = origen.upper()
         destino = destino.upper()
 
+        # Compatibility rule:
+        # If the new requirement is enabled but tipos_transporte comes as [],
+        # it must not fail. In that case, it behaves like the normal route
+        # calculation with all transports available.
+        if exigir_todos_los_transportes and tipos_transporte == []:
+            tipos_transporte = None
+
         self._validate_airports(origen=origen, destino=destino)
         self._validate_transport_types(tipos_transporte)
 
         normalized_criterion = normalize_criterion(criterio)
         aircraft_registry = self._build_registry(tipos_transporte)
+
+        should_require_all_transports = (
+            exigir_todos_los_transportes is True
+            and tipos_transporte is not None
+            and len(tipos_transporte) >= 2
+        )
+
+        if should_require_all_transports:
+            return dijkstra_con_transportes_requeridos(
+                graph=self.graph,
+                origen=origen,
+                destino=destino,
+                criterion=normalized_criterion,
+                aircraft_registry=aircraft_registry,
+                tipos_transporte=tipos_transporte,
+                include_secondary=incluir_secundarios,
+                transportes_requeridos=tipos_transporte,
+            )
 
         return dijkstra(
             graph=self.graph,
